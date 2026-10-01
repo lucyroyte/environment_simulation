@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Neighborhood Park</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="viewport"></div>
+
+  <header id="toolbar" role="toolbar" aria-label="Park actions">
+    <div class="brand">
+      <strong>Neighborhood Park</strong>
+      <span><span id="day">Day 0</span> · <span id="census"></span></span>
+    </div>
+    <div class="group">
+      <button data-action="add" title="Add a walking user on a random path (A)"><span class="icon">＋</span><span class="label">Add user</span></button>
+      <button data-action="remove"><span class="icon">−</span><span class="label">Remove user</span></button>
+      <button data-action="activity"><span class="icon">⟳</span><span class="label">Change activity</span></button>
+    </div>
+    <div class="group">
+      <button data-action="advance" title="Move walkers and grow grass (T)"><span class="icon">⏭</span><span class="label">Advance time</span></button>
+      <button data-action="auto" title="Advance time continuously (P)"><span class="icon">▶</span><span class="label">Play</span></button>
+    </div>
+    <div class="group">
+      <button data-action="mow"><span class="icon">✂</span><span class="label">Mow lawn</span></button>
+      <button data-action="toggle"><span class="icon">⛌</span><span class="label">Open/close lawn</span></button>
+    </div>
+    <div class="group">
+      <button data-action="reset" title="Restore the example scene"><span class="icon">↺</span><span class="label">Reset</span></button>
+    </div>
+  </header>
+
+  <aside id="side">
+    <section id="inspector" class="panel"></section>
+
+    <details class="panel" open>
+      <summary>Rules <span id="rules-summary"></span></summary>
+      <ul id="rules"></ul>
+    </details>
+
+    <details class="panel" id="legend">
+      <summary>Legend</summary>
+      <div class="legend-row"><span>Users</span><span id="legend-activity"></span></div>
+      <div class="legend-row"><span>Grass</span><span class="grass-scale"><small>2″</small><span id="legend-grass"></span><small>20″</small></span></div>
+      <div class="legend-row"><span>Needs mowing</span><span><span class="badge mow">✂ <span id="mow-threshold"></span></span> + pulsing dashed edge</span></div>
+      <div class="legend-row"><span>Closed lawn</span><span>fence + red hatching</span></div>
+      <div class="legend-row"><span>Keys</span><span class="keys">A add · Del remove · C activity · T step · P play · M mow · O open/close</span></div>
+    </details>
+  </aside>
+
+  <div id="log" aria-live="polite"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

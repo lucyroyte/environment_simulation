@@ -44,7 +44,7 @@ html, body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 8px 10px;
   background: var(--panel);
   border-radius: 12px;
@@ -57,7 +57,7 @@ html, body {
   display: flex;
   flex-direction: column;
   line-height: 1.2;
-  margin-right: 8px;
+  margin-right: 2px;
   font-size: 13px;
 }
 .brand strong { font-size: 15px; }
@@ -66,7 +66,7 @@ html, body {
 .group {
   display: flex;
   gap: 4px;
-  padding-left: 8px;
+  padding-left: 6px;
   border-left: 1px solid var(--line);
 }
 
@@ -76,7 +76,7 @@ button {
   gap: 6px;
   font: inherit;
   font-size: 13px;
-  padding: 7px 11px;
+  padding: 7px 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
@@ -88,15 +88,17 @@ button:hover:not(:disabled) { background: #eef4ff; border-color: var(--accent); 
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 button .icon { width: 1em; text-align: center; }
+.group.push { margin-left: auto; border-left: 0; }
+.group.push .label { display: none; }
 
 /* ---- side panels ---- */
 
 #side {
   position: fixed;
   right: 12px;
-  top: 84px;
+  top: calc(var(--toolbar-h, 60px) + 24px);
   width: 300px;
-  max-height: calc(100% - 96px);
+  max-height: calc(100% - var(--toolbar-h, 60px) - 36px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -226,6 +228,18 @@ summary { cursor: pointer; font-weight: 600; }
   border-radius: 4px;
   border: 1px solid transparent;
 }
+
+.bench-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #6b4a2f;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 0 5px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+.bench-label.full { color: var(--bad); }
+.bench-label.selected { border-color: #ffd43b; }
 
 .user-label {
   background: #fff;

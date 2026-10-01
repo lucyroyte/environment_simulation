@@ -24,18 +24,25 @@
     </div>
     <div class="group">
       <button data-action="add" title="Add a walking user on a random path (A)"><span class="icon">＋</span><span class="label">Add user</span></button>
-      <button data-action="remove"><span class="icon">−</span><span class="label">Remove user</span></button>
-      <button data-action="activity"><span class="icon">⟳</span><span class="label">Change activity</span></button>
+      <button data-action="remove" title="Remove user"><span class="icon">−</span><span class="label">Remove</span></button>
+      <button data-action="activity"><span class="icon">⟳</span><span class="label">Activity</span></button>
+      <button data-action="bench"><span class="icon">⑂</span><span class="label">Bench</span></button>
     </div>
     <div class="group">
-      <button data-action="advance" title="Move walkers and grow grass (T)"><span class="icon">⏭</span><span class="label">Advance time</span></button>
+      <button data-action="dog"><span class="icon">🐕</span><span class="label">Add dog</span></button>
+      <button data-action="leash"><span class="icon">➰</span><span class="label">Unleash</span></button>
+      <button data-action="fetch"><span class="icon">🎾</span><span class="label">Fetch</span></button>
+    </div>
+    <div class="group">
+      <button data-action="advance" title="Move walkers and grow grass (T)"><span class="icon">⏭</span><span class="label">Advance</span></button>
       <button data-action="auto" title="Advance time continuously (P)"><span class="icon">▶</span><span class="label">Play</span></button>
     </div>
     <div class="group">
-      <button data-action="mow"><span class="icon">✂</span><span class="label">Mow lawn</span></button>
-      <button data-action="toggle"><span class="icon">⛌</span><span class="label">Open/close lawn</span></button>
+      <button data-action="clear"><span class="icon">📣</span><span class="label">Clear lawn</span></button>
+      <button data-action="mow"><span class="icon">✂</span><span class="label">Mow</span></button>
+      <button data-action="toggle"><span class="icon">⛌</span><span class="label">Open/close</span></button>
     </div>
-    <div class="group">
+    <div class="group push">
       <button data-action="reset" title="Restore the example scene"><span class="icon">↺</span><span class="label">Reset</span></button>
     </div>
   </header>
@@ -50,11 +57,14 @@
 
     <details class="panel" id="legend">
       <summary>Legend</summary>
-      <div class="legend-row"><span>Users</span><span id="legend-activity"></span></div>
+      <div class="legend-row"><span>Activity</span><span id="legend-activity"></span></div>
+      <div class="legend-row"><span>People</span><span>body colored by activity</span></div>
+      <div class="legend-row"><span>Dogs</span><span>collar + ground disk by activity, red leash</span></div>
+      <div class="legend-row"><span>Benches</span><span>seat 3 people beside a path</span></div>
       <div class="legend-row"><span>Grass</span><span class="grass-scale"><small>2″</small><span id="legend-grass"></span><small>20″</small></span></div>
       <div class="legend-row"><span>Needs mowing</span><span><span class="badge mow">✂ <span id="mow-threshold"></span></span> + pulsing dashed edge</span></div>
       <div class="legend-row"><span>Closed lawn</span><span>fence + red hatching</span></div>
-      <div class="legend-row"><span>Keys</span><span class="keys">A add · Del remove · C activity · T step · P play · M mow · O open/close</span></div>
+      <div class="legend-row"><span>Keys</span><span class="keys">A add · Del remove · C activity · B bench · D dog · L leash · F fetch · T step · P play · X clear · M mow · O open/close</span></div>
     </details>
   </aside>
 

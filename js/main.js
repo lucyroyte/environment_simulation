@@ -1,7 +1,7 @@
 // Wires the park model, the three.js view and the toolbar together.
 
-import { Park, MOW_HEIGHT, NEEDS_MOWING_ABOVE, SQFT_PER_USER, LEASH_LENGTH } from './model.js';
-import { ParkView, ACTIVITY_COLORS, GRASS_SHORT, GRASS_TALL } from './view.js';
+import { Park, MOW_HEIGHT, NEEDS_MOWING_ABOVE, SQFT_PER_USER, LEASH_LENGTH } from './model.js?v=2';
+import { ParkView, ACTIVITY_COLORS, GRASS_SHORT, GRASS_TALL } from './view.js?v=2';
 
 const park = new Park();
 const view = new ParkView(document.getElementById('viewport'), park);

@@ -3,8 +3,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import * as G from './geometry.js';
-import { GRASS_MIN, GRASS_MAX } from './model.js';
+import * as G from './geometry.js?v=2';
+import { GRASS_MIN, GRASS_MAX } from './model.js?v=2';
 
 export const ACTIVITY_COLORS = {
   walking: '#2f74e0',

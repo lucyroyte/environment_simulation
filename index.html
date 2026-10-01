@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Neighborhood Park</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=2">
   <script type="importmap">
     {
       "imports": {
@@ -70,6 +70,8 @@
 
   <div id="log" aria-live="polite"></div>
 
-  <script type="module" src="js/main.js"></script>
+  <!-- Bump ?v= here and on every local import when shipping changes, so
+       browsers fetch the new files instead of stale cached ones. -->
+  <script type="module" src="js/main.js?v=2"></script>
 </body>
 </html>

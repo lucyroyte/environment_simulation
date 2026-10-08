@@ -251,6 +251,35 @@ summary { cursor: pointer; font-weight: 600; }
   white-space: nowrap;
 }
 
+/* Street and landmark names show once you zoom out past the lawn. */
+.place-label {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff;
+}
+.street-label { color: #3d434b; display: none; }
+.water-label { color: #1c5d85; font-style: italic; }
+.zoomed-out .street-label { display: block; }
+.zoomed-out .bench-label,
+.zoomed-out .ll-stats,
+.zoomed-out .ll-badges { display: none; }
+.zoomed-out .lawn-label { padding: 2px 6px; font-size: 11px; }
+
+#attribution {
+  position: fixed;
+  right: 8px;
+  bottom: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.7);
+  padding: 1px 6px;
+  border-radius: 4px;
+  z-index: 5;
+}
+#attribution a { color: inherit; }
+
 /* ---- small screens ---- */
 
 @media (max-width: 760px) {
@@ -271,4 +300,5 @@ summary { cursor: pointer; font-weight: 600; }
   #log { display: none; }
   .path-label { display: none; }
   .lawn-label { font-size: 10px; padding: 3px 6px; }
+  #attribution { bottom: auto; top: calc(var(--toolbar-h, 90px) + 14px); }
 }

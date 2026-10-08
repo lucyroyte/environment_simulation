@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Neighborhood Park</title>
-  <link rel="stylesheet" href="css/style.css?v=2">
+  <title>Central Park</title>
+  <link rel="stylesheet" href="css/style.css?v=3">
   <script type="importmap">
     {
       "imports": {
@@ -19,7 +19,7 @@
 
   <header id="toolbar" role="toolbar" aria-label="Park actions">
     <div class="brand">
-      <strong>Neighborhood Park</strong>
+      <strong>Central Park</strong>
       <span><span id="day">Day 0</span> · <span id="census"></span></span>
     </div>
     <div class="group">
@@ -64,14 +64,17 @@
       <div class="legend-row"><span>Grass</span><span class="grass-scale"><small>2″</small><span id="legend-grass"></span><small>20″</small></span></div>
       <div class="legend-row"><span>Needs mowing</span><span><span class="badge mow">✂ <span id="mow-threshold"></span></span> + pulsing dashed edge</span></div>
       <div class="legend-row"><span>Closed lawn</span><span>fence + red hatching</span></div>
+      <div class="legend-row"><span>Map</span><span>Real Central Park lawns, paths and water, with the Manhattan streets and buildings around it. Up is Manhattan north, 29° east of true north.</span></div>
       <div class="legend-row"><span>Keys</span><span class="keys">A add · Del remove · C activity · B bench · D dog · L leash · F fetch · T step · P play · X clear · M mow · O open/close</span></div>
     </details>
   </aside>
 
   <div id="log" aria-live="polite"></div>
 
+  <div id="attribution">Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
+
   <!-- Bump ?v= here and on every local import when shipping changes, so
        browsers fetch the new files instead of stale cached ones. -->
-  <script type="module" src="js/main.js?v=2"></script>
+  <script type="module" src="js/main.js?v=3"></script>
 </body>
 </html>

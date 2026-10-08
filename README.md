@@ -1,4 +1,4 @@
-# Environment Simulation: Neighborhood Park
+# Environment Simulation: Central Park
 
 A single-page web app, written in vanilla JavaScript with three.js, that visualizes a semantic model of a park. The model has lawns, paths, benches and users (people and dogs), the relationships between them, and the rules they must follow.
 
@@ -12,10 +12,15 @@ npx http-server -c-1 .     # or: python3 -m http.server
 
 Then open http://localhost:8080 (or :8000). three.js is loaded from the jsDelivr CDN.
 
+## Map
+
+The park is the real Central Park. `data/central-park.geojson` is a vendored extract of OpenStreetMap: the park outline, 11 named lawns (Sheep Meadow, Great Lawn, East Meadow, North Meadow, Cedar Hill and others), every footpath (split at junctions so walkers follow the real network), water, woods, and the streets and buildings about one block around the park. The app never calls a map API. To refresh the extract, run `python3 scripts/build_central_park.py` (needs `shapely`). Lawns are the OSM outlines with the paths that cross them cut out. The map is drawn in feet, rotated so the Manhattan grid is square to the screen. Map data © OpenStreetMap contributors, ODbL.
+
 ## Files
 
 | File | Role |
 | --- | --- |
+| `js/map.js` | Loads the GeoJSON extract and projects it to feet. |
 | `js/model.js` | The semantic model: entities, relationships, rules, actions. Has no rendering code. |
 | `js/geometry.js` | Polygon helpers: area, containment, overlap, shared edges. |
 | `js/view.js` | three.js scene: lawns, paths, users, fences, labels, animation. |
@@ -44,7 +49,7 @@ The **Rules** panel checks every rule after each action. Actions enforce the rul
 
 ## Example scene
 
-A loop of four paths with a center path crossing it. There are three lawns of different sizes: Great Lawn, East Meadow (starts at 17″, needs mowing) and Rose Corner (starts closed). Eleven people: 6 walking (one with a leashed dog), 3 sitting on lawns (one with a dog playing off leash), 1 standing and 1 sitting on a bench. Five benches line the paths.
+The camera starts at the south end of the Great Lawn, by Turtle Pond. Sheep Meadow starts at 17″ and needs mowing; Cedar Hill starts closed. Eleven people: 6 walking (one with a leashed dog), 3 sitting on the Great Lawn (one with a dog playing off leash), 1 standing and 1 sitting on a bench. Benches line the paths beside each lawn. Add user brings a visitor onto a path near where the camera is looking. Zoom out to see the whole park and its street grid.
 
 Visual encoding:
 - Grass color runs from light green (short) to dark green (tall), and the grass tufts grow taller.

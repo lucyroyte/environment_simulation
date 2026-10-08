@@ -1,9 +1,11 @@
 // Wires the park model, the three.js view and the toolbar together.
 
-import { Park, MOW_HEIGHT, NEEDS_MOWING_ABOVE, SQFT_PER_USER, LEASH_LENGTH } from './model.js?v=2';
-import { ParkView, ACTIVITY_COLORS, GRASS_SHORT, GRASS_TALL } from './view.js?v=2';
+import { Park, MOW_HEIGHT, NEEDS_MOWING_ABOVE, SQFT_PER_USER, LEASH_LENGTH } from './model.js?v=3';
+import { ParkView, ACTIVITY_COLORS, GRASS_SHORT, GRASS_TALL } from './view.js?v=3';
+import { loadMap } from './map.js?v=3';
 
-const park = new Park();
+const map = await loadMap();
+const park = new Park(map);
 const view = new ParkView(document.getElementById('viewport'), park);
 const $ = (id) => document.getElementById(id);
 
@@ -29,7 +31,7 @@ const selectedLawn = () => (selection?.type === 'lawn' ? park.lawn(selection.id)
 
 const actions = {
   add() {
-    const r = park.addUser();
+    const r = park.addUser(view.focusPoint());
     run(r);
     if (r.ok) select({ type: 'user', id: r.user.id });
   },
@@ -37,7 +39,7 @@ const actions = {
   activity() { run(park.changeActivity(selection?.id)); },
   bench() { run(park.sitOnBench(selection?.id)); },
   dog() {
-    const r = park.addDog(selectedUser()?.id);
+    const r = park.addDog(selectedUser()?.id, view.focusPoint());
     run(r);
     if (r.ok) select({ type: 'user', id: r.user.id });
   },
@@ -152,6 +154,20 @@ function updateToolbar() {
   auto.querySelector('.icon').textContent = autoTimer ? '❚❚' : '▶';
 }
 
+// "East Drive, Wallach Walk and 12 footpaths" for a list of paths.
+function pathList(ids) {
+  const named = new Set();
+  let other = 0;
+  for (const id of ids) {
+    const p = park.path(id);
+    if (/^(Footpath|Trail|Steps|Bridle path|Bike path|Track|Service road|Park road|Walk)$/.test(p.name)) other++;
+    else named.add(p.name);
+  }
+  const parts = [...named];
+  if (other) parts.push(`${other} ${other === 1 ? 'footpath' : 'footpaths'}`);
+  return parts.join(', ') || '—';
+}
+
 const row = (k, v) => `<div class="row"><span>${k}</span><span>${v}</span></div>`;
 const chip = (activity) => `<span class="chip" style="--c:${ACTIVITY_COLORS[activity]}">${activity}</span>`;
 
@@ -159,7 +175,7 @@ function renderInspector() {
   const el = $('inspector');
   if (!selection) {
     el.innerHTML = `<h2>Nothing selected</h2>
-      <p class="hint">Click a person, dog, lawn, path or bench in the park. Drag to orbit, scroll to zoom.</p>`;
+      <p class="hint">Click a person, dog, lawn, path or bench in the park. Drag to orbit, right-drag to pan, scroll to zoom out to the whole park and the streets around it.</p>`;
     return;
   }
   if (selection.type === 'user') {
@@ -191,11 +207,11 @@ function renderInspector() {
     const mow = park.canMow(l);
     el.innerHTML = `<div class="kind">Lawn</div><h2>${l.name}</h2>
       ${row('Grass height', `${l.grassHeight.toFixed(1)}″${park.needsMowing(l) ? ' <span class="badge mow">needs mowing</span>' : ''}`)}
-      ${row('Area', `${l.area.toFixed(0)} ft²`)}
+      ${row('Area', `${Math.round(l.area).toLocaleString()} ft² <small>(${(l.area / 43560).toFixed(1)} acres)</small>`)}
       ${row('Status', `<span class="badge ${l.status}">${l.status}</span>`)}
-      ${row('Users', `${here.length} / ${l.capacity} <small>(area ÷ ${SQFT_PER_USER})</small>`)}
+      ${row('Users', `${here.length} / ${l.capacity.toLocaleString()} <small>(area ÷ ${SQFT_PER_USER})</small>`)}
       ${row('', `<small>${here.length - dogs} people, ${dogs} dogs</small>`)}
-      ${row('Bordered by', l.borderedBy.map((id) => park.path(id).name).join(', '))}
+      ${row('Bordered by', pathList(l.borderedBy))}
       ${row('Boundary', `${l.boundary.length}-sided polygon`)}
       <p class="hint">${mow.ok ? 'Can be mowed now.' : `Can't mow: ${mow.reason}. Use Clear lawn to send everyone to the path.`}</p>`;
     return;
@@ -212,12 +228,13 @@ function renderInspector() {
   }
   const p = park.path(selection.id);
   el.innerHTML = `<div class="kind">Path</div><h2>${p.name}</h2>
+    ${row('Type', p.osmKind)}
     ${row('Width', `${p.width} ft`)}
     ${row('Length', `${p.len.toFixed(0)} ft`)}
     ${row('Users', park.usersOnPath(p.id).length)}
     ${row('Borders lawns', p.bordersLawns.map((id) => park.lawn(id).name).join(', ') || '—')}
     ${row('Benches', p.benches.map((id) => park.bench(id).name).join(', ') || '—')}
-    ${row('Connects to', p.connectsTo.map((id) => park.path(id).name).join(', '))}`;
+    ${row('Connects to', pathList(p.connectsTo))}`;
 }
 
 function renderRules() {

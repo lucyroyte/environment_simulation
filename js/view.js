@@ -1,10 +1,11 @@
-// three.js rendering of the park model.
+// three.js rendering of the park model on the Central Park map.
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import * as G from './geometry.js?v=2';
-import { GRASS_MIN, GRASS_MAX } from './model.js?v=2';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import * as G from './geometry.js?v=3';
+import { GRASS_MIN, GRASS_MAX } from './model.js?v=3';
 
 export const ACTIVITY_COLORS = {
   walking: '#2f74e0',
@@ -47,6 +48,94 @@ function outline(poly, y, material) {
   return line;
 }
 
+// Flat ribbons along polylines (paths, streets), as one merged geometry.
+// faceOwner[i] is the index of the line that triangle i belongs to.
+function ribbonGeometry(lines, y, widthOf) {
+  const pos = [];
+  const faceOwner = [];
+  lines.forEach((line, k) => {
+    const pts = line.points;
+    const hw = widthOf(line) / 2;
+    const tri = (a, b, c) => {
+      pos.push(a.x, y, -a.y, b.x, y, -b.y, c.x, y, -c.y);
+      faceOwner.push(k);
+    };
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len < 1e-6) continue;
+      const nx = (-(b.y - a.y) / len) * hw, ny = ((b.x - a.x) / len) * hw;
+      const a1 = { x: a.x + nx, y: a.y + ny }, a2 = { x: a.x - nx, y: a.y - ny };
+      const b1 = { x: b.x + nx, y: b.y + ny }, b2 = { x: b.x - nx, y: b.y - ny };
+      tri(a2, b2, b1);
+      tri(a2, b1, a1);
+    }
+    // Round joints so bends and junctions have no notches.
+    for (let i = 0; i < pts.length; i++) {
+      if (pts.length === 2 && hw < 6) break;
+      const c = pts[i];
+      const n = 8;
+      for (let j = 0; j < n; j++) {
+        const t0 = (j / n) * Math.PI * 2, t1 = ((j + 1) / n) * Math.PI * 2;
+        tri(c, { x: c.x + Math.cos(t0) * hw, y: c.y + Math.sin(t0) * hw }, { x: c.x + Math.cos(t1) * hw, y: c.y + Math.sin(t1) * hw });
+      }
+    }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return { geometry: g, faceOwner };
+}
+
+// Ground cover is nearly coplanar, which z-fights from far away. Instead of
+// relying on depth, these layers skip depth writes and paint in `order`
+// (higher on top) before everything that stands on them.
+const GROUND_HEIGHT = 0.12;
+function groundLayer(scene, geometry, color, order, extra = {}) {
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, roughness: 1, depthWrite: false, ...extra }));
+  mesh.position.y = (order / 10) * GROUND_HEIGHT;
+  mesh.renderOrder = order - 20;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  return mesh;
+}
+
+// Flat fills for many polygons merged into one geometry.
+function fillGeometry(polys, y) {
+  const parts = polys.filter((p) => p.length >= 3).map((p) => {
+    const g = new THREE.ShapeGeometry(shapeOf(p)).rotateX(-Math.PI / 2);
+    g.translate(0, y, 0);
+    return g;
+  });
+  return mergeGeometries(parts);
+}
+
+// Extruded building footprints (walls and flat roofs) in one geometry.
+function buildingGeometry(buildings) {
+  const pos = [];
+  const col = [];
+  const base = new THREE.Color('#e9e4da');
+  const c = new THREE.Color();
+  buildings.forEach((b, k) => {
+    const pts = G.toCCW(b.points);
+    const h = Math.max(12, b.height);
+    c.copy(base).offsetHSL(0, 0, ((k * 37) % 11 - 5) / 120);
+    const push = (p, y) => { pos.push(p.x, y, -p.y); col.push(c.r, c.g, c.b); };
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], d = pts[(i + 1) % pts.length];
+      push(a, 0); push(d, 0); push(d, h);
+      push(a, 0); push(d, h); push(a, h);
+    }
+    const tris = THREE.ShapeUtils.triangulateShape(pts.map((p) => new THREE.Vector2(p.x, p.y)), []);
+    for (const [i, j, m] of tris) { push(pts[i], h); push(pts[j], h); push(pts[m], h); }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
 function hatchTexture() {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
@@ -80,7 +169,7 @@ export class ParkView {
     this.animations = new Map();
     this.clock = new THREE.Clock();
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -94,40 +183,46 @@ export class ParkView {
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#dde9e4');
-    scene.fog = new THREE.Fog('#dde9e4', 140, 320);
+    scene.fog = new THREE.Fog('#dde9e4', 9000, 26000);
     this.scene = scene;
 
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.5, 1000);
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.5, 40000);
     this.camera = camera;
 
+    // Start looking at the visitors by the Great Lawn. Narrow screens put the
+    // inspector below the map; wide ones to its right.
     const controls = new OrbitControls(camera, renderer.domElement);
-    // Narrow screens put the inspector below the park; wide ones to its right.
+    const f = park.focus;
     if (container.clientWidth < 760) {
-      camera.position.set(0, 170, 120);
-      controls.target.set(0, 0, 14);
+      camera.position.set(f.x, 260, -f.y + 190);
+      controls.target.set(f.x, 0, -f.y + 10);
     } else {
-      camera.position.set(6, 66, 80);
-      controls.target.set(11, 0, 3);
+      camera.position.set(f.x + 10, 105, -f.y + 135);
+      controls.target.set(f.x + 25, 0, -f.y - 10);
     }
     controls.enableDamping = true;
     controls.maxPolarAngle = Math.PI * 0.47;
-    controls.minDistance = 15;
-    controls.maxDistance = 220;
+    controls.minDistance = 12;
+    controls.maxDistance = 18000;
+    controls.zoomSpeed = 1.4;
     this.controls = controls;
 
     scene.add(new THREE.HemisphereLight('#ffffff', '#6f8f58', 1.1));
+    // The sun and its shadow box follow the camera target, so shadows stay
+    // crisp wherever you are in the park.
     const sun = new THREE.DirectionalLight('#fff6e5', 1.9);
-    sun.position.set(-40, 90, 50);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, { left: -70, right: 70, top: 60, bottom: -60, near: 10, far: 250 });
+    Object.assign(sun.shadow.camera, { left: -160, right: 160, top: 160, bottom: -160, near: 10, far: 600 });
     sun.shadow.bias = -0.0005;
-    scene.add(sun);
+    scene.add(sun, sun.target);
+    this.sun = sun;
 
     this.buildGround();
+    this.buildCity();
     this.buildPaths();
     this.buildLawns();
-    this.buildDecor();
+    this.buildTrees();
     this.buildBenches();
 
     this.userGroup = new THREE.Group();
@@ -181,44 +276,76 @@ export class ParkView {
   // ---- static scenery --------------------------------------------------
 
   buildGround() {
-    const ground = new THREE.Mesh(
-      new THREE.CircleGeometry(400, 64).rotateX(-Math.PI / 2),
-      new THREE.MeshStandardMaterial({ color: '#d9d2c1', roughness: 1 }),
-    );
-    ground.receiveShadow = true;
-    this.scene.add(ground);
+    const map = this.park.map;
+    // City blocks (pavement), then the park and what grows in it.
+    groundLayer(this.scene, new THREE.CircleGeometry(30000, 64).rotateX(-Math.PI / 2), '#d6d2ca', 0);
+    groundLayer(this.scene, fillGeometry([map.park.points], 0), '#b7cf98', 2);
+    groundLayer(this.scene, fillGeometry(map.grass.map((g) => g.points), 0), '#9fcd78', 3);
+    groundLayer(this.scene, fillGeometry(map.woods.map((w) => w.points), 0), '#6f9a55', 4);
+    groundLayer(this.scene, fillGeometry(map.water.map((w) => w.points), 0), '#5fa8d3', 5,
+      { roughness: 0.2, metalness: 0.1 });
+    for (const w of map.water) {
+      if (!w.name || G.polygonArea(w.points) < 20000) continue;
+      const { div, obj } = label('place-label water-label');
+      div.textContent = w.name;
+      obj.position.copy(v3(G.centroid(w.points), 2));
+      this.scene.add(obj);
+    }
+  }
 
-    // The park's footprint, slightly darker than the surrounding street.
-    const pad = new THREE.Mesh(
-      new THREE.PlaneGeometry(92, 62).rotateX(-Math.PI / 2),
-      new THREE.MeshStandardMaterial({ color: '#b9ae95', roughness: 1 }),
-    );
-    pad.position.y = 0.02;
-    pad.receiveShadow = true;
-    this.scene.add(pad);
+  // Streets of the Manhattan grid and the buildings that line the park.
+  buildCity() {
+    const map = this.park.map;
+    groundLayer(this.scene, ribbonGeometry(map.streets, 0, (s) => s.width).geometry, '#8d9096', 1);
+    groundLayer(this.scene, ribbonGeometry(map.transverses, 0, (s) => s.width).geometry, '#7b7e84', 6);
+
+    const buildings = new THREE.Mesh(buildingGeometry(map.buildings),
+      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }));
+    buildings.castShadow = true;
+    buildings.receiveShadow = true;
+    this.scene.add(buildings);
+
+    // One label per street name, at the point nearest the park.
+    const park = map.park.points;
+    const best = new Map();
+    for (const st of map.streets) {
+      if (!st.name) continue;
+      for (const p of st.points) {
+        if (G.pointInPolygon(p, park)) continue;
+        const d = G.nearestOnBoundary(p, park).dist;
+        if (d < 40) continue;
+        if (!best.has(st.name) || d < best.get(st.name).d) best.set(st.name, { d, p });
+      }
+    }
+    this.streetLabels = [];
+    for (const [name, { d, p }] of best) {
+      if (d > 450) continue;
+      const { div, obj } = label('place-label street-label');
+      div.textContent = name;
+      obj.position.copy(v3(p, 3));
+      this.scene.add(obj);
+      this.streetLabels.push(obj);
+    }
   }
 
   buildPaths() {
-    this.pathViews = new Map();
-    const mat = new THREE.MeshStandardMaterial({ color: '#e7dcc4', roughness: 0.95 });
-    const edgeMat = new THREE.LineBasicMaterial({ color: '#a8977a' });
-    for (const path of this.park.paths) {
-      const mesh = new THREE.Mesh(flatGeometry(path.boundary, PATH_TOP), mat.clone());
-      mesh.receiveShadow = true;
-      mesh.userData = { kind: 'path', id: path.id };
-      this.scene.add(mesh);
-      this.scene.add(outline(path.boundary, PATH_TOP + 0.01, edgeMat));
-      const sel = outline(path.boundary, PATH_TOP + 0.05, new THREE.LineBasicMaterial({ color: '#ffd43b' }));
-      sel.visible = false;
-      this.scene.add(sel);
+    const paths = this.park.paths;
+    const { geometry, faceOwner } = ribbonGeometry(paths, 0, (p) => p.width);
+    const mesh = groundLayer(this.scene, geometry, '#e7dcc4', 7);
+    mesh.position.y = PATH_TOP;
+    mesh.userData = { kind: 'path' };
+    this.pathMesh = mesh;
+    this.pathFaceOwner = faceOwner;
 
-      const { div, obj } = label('path-label');
-      div.textContent = path.name;
-      const mid = G.centroid(path.boundary);
-      obj.position.copy(v3(mid, 0.6));
-      this.scene.add(obj);
-      this.pathViews.set(path.id, { mesh, sel, div });
-    }
+    // The selected path gets a highlight ribbon and a label.
+    this.pathSel = new THREE.Mesh(new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({ color: '#ffd43b', transparent: true, opacity: 0.55, depthWrite: false }));
+    this.pathSel.renderOrder = 3;
+    this.scene.add(this.pathSel);
+    const { div, obj } = label('path-label selected');
+    this.pathLabel = { div, obj };
+    this.scene.add(obj);
+    this.shownPath = null;
   }
 
   buildLawns() {
@@ -239,13 +366,13 @@ export class ParkView {
       group.add(mesh);
 
       // Grass tufts whose height tracks the lawn's grass height.
-      const count = Math.min(900, Math.round(lawn.area / 2.2));
+      const count = Math.min(4000, Math.round(lawn.area / 2.2));
       const tuftMat = new THREE.MeshStandardMaterial({ color: grassColor(lawn.grassHeight), roughness: 0.85 });
       const tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, count);
       tufts.castShadow = false;
       tufts.receiveShadow = true;
       const tuftData = [];
-      const rng = mulberry(lawn.id.charCodeAt(0) * 99);
+      const rng = mulberry([...lawn.id].reduce((h, ch) => h * 31 + ch.charCodeAt(0), 7));
       for (let i = 0; i < count; i++) {
         tuftData.push({
           p: G.randomPointInPolygon(lawn.boundary, 0.35, rng),
@@ -293,55 +420,53 @@ export class ParkView {
       const len = Math.hypot(b.x - a.x, b.y - a.y);
       const n = Math.max(1, Math.ceil(len / 3));
       for (let k = 0; k < n; k++) posts.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
-      for (const h of [1.1, 2.4]) {
-        const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.18, 0.12), woodMat);
-        rail.position.copy(v3({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, LAWN_TOP + h));
-        rail.rotation.y = Math.atan2(b.y - a.y, b.x - a.x);
-        rail.castShadow = true;
-        rails.push(rail);
-      }
+      for (const h of [1.1, 2.4]) rails.push({ a, b, len, h });
     }
-    const inst = new THREE.InstancedMesh(postGeo, woodMat, posts.length);
     const m = new THREE.Matrix4();
+    const inst = new THREE.InstancedMesh(postGeo, woodMat, posts.length);
     posts.forEach((p, i) => {
       m.makeTranslation(p.x, LAWN_TOP, -p.y);
       inst.setMatrixAt(i, m);
     });
-    inst.castShadow = true;
-    fence.add(inst, ...rails);
+    const railMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.18, 0.12), woodMat, rails.length);
+    const q = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    rails.forEach(({ a, b, len, h }, i) => {
+      q.setFromAxisAngle(up, Math.atan2(b.y - a.y, b.x - a.x));
+      m.compose(v3({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, LAWN_TOP + h), q, new THREE.Vector3(len, 1, 1));
+      railMesh.setMatrixAt(i, m);
+    });
+    inst.castShadow = railMesh.castShadow = true;
+    fence.add(inst, railMesh);
     return fence;
   }
 
-  buildDecor() {
-    const trunkGeo = new THREE.CylinderGeometry(0.35, 0.5, 4, 8).translate(0, 2, 0);
-    const crownGeo = new THREE.IcosahedronGeometry(2.6, 1);
-    const trunkMat = new THREE.MeshStandardMaterial({ color: '#6b4a2f' });
-    const crownMats = ['#3f7d3a', '#4f8f3f', '#2f6b35'].map((c) => new THREE.MeshStandardMaterial({ color: c, flatShading: true }));
-    const trees = [
-      [-34, 19, 1.0], [20, -10, 1.0], [32, -19, 0.9], [30, -6, 0.8],
-      [-47, 18, 1.2], [-47, -4, 1.0], [-46, -20, 1.1], [47, 16, 1.0], [46, -2, 1.3], [47, -21, 0.9],
-      [-28, 31, 1.0], [-6, 31, 1.2], [18, 31, 0.9], [36, 31, 1.1], [-34, -31, 1.1], [-10, -31, 0.9], [14, -31, 1.2], [34, -31, 1.0],
-    ];
-    trees.forEach(([x, y, s], i) => {
-      const t = new THREE.Group();
-      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-      const crown = new THREE.Mesh(crownGeo, crownMats[i % 3]);
-      crown.position.y = 5.6;
-      trunk.castShadow = crown.castShadow = true;
-      t.add(trunk, crown);
-      t.scale.setScalar(s);
-      t.position.copy(v3({ x, y }));
-      this.scene.add(t);
+  // Trees fill the park's wooded areas.
+  buildTrees() {
+    const woods = this.park.map.woods;
+    const rng = mulberry(1858);
+    const spots = [];
+    for (const w of woods) {
+      const n = Math.min(400, Math.round(G.polygonArea(w.points) / 1400));
+      for (let i = 0; i < n; i++) spots.push(G.randomPointInPolygon(w.points, 4, rng));
+    }
+    const trunkGeo = new THREE.CylinderGeometry(0.35, 0.5, 4, 6).translate(0, 2, 0);
+    const crownGeo = new THREE.IcosahedronGeometry(2.6, 1).translate(0, 5.6, 0);
+    const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshStandardMaterial({ color: '#6b4a2f' }), spots.length);
+    const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshStandardMaterial({ color: '#ffffff', flatShading: true }), spots.length);
+    const greens = ['#3f7d3a', '#4f8f3f', '#2f6b35'].map((c) => new THREE.Color(c));
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    spots.forEach((p, i) => {
+      const k = 3 + rng() * 2.5;
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * Math.PI);
+      m.compose(v3(p), q, new THREE.Vector3(k, k, k));
+      trunks.setMatrixAt(i, m);
+      crowns.setMatrixAt(i, m);
+      crowns.setColorAt(i, greens[i % 3]);
     });
-
-    // A small pond in the unplanted south-east corner (not walkable).
-    const pond = new THREE.Mesh(
-      new THREE.CircleGeometry(4.5, 40).rotateX(-Math.PI / 2),
-      new THREE.MeshStandardMaterial({ color: '#5fa8d3', roughness: 0.2, metalness: 0.1 }),
-    );
-    pond.scale.set(1.4, 1, 1);
-    pond.position.copy(v3({ x: 26, y: -13 }, 0.06));
-    this.scene.add(pond);
+    trunks.castShadow = crowns.castShadow = true;
+    this.scene.add(trunks, crowns);
   }
 
   buildBenches() {
@@ -392,12 +517,7 @@ export class ParkView {
   sync() {
     const park = this.park;
     for (const lawn of park.lawns) this.syncLawn(lawn);
-    for (const [id, pv] of this.pathViews) {
-      const sel = this.selection?.type === 'path' && this.selection.id === id;
-      pv.sel.visible = sel;
-      pv.mesh.material.color.set(sel ? '#f3e8c9' : '#e7dcc4');
-      pv.div.classList.toggle('selected', sel);
-    }
+    this.syncPathSelection();
     for (const bench of park.benches) {
       const bv = this.benchViews.get(bench.id);
       const sel = this.selection?.type === 'bench' && this.selection.id === bench.id;
@@ -420,6 +540,20 @@ export class ParkView {
       }
     }
     for (const user of park.users) this.syncUser(user);
+  }
+
+  syncPathSelection() {
+    const id = this.selection?.type === 'path' ? this.selection.id : null;
+    if (id === this.shownPath) return;
+    this.shownPath = id;
+    const path = id && this.park.path(id);
+    this.pathSel.geometry.dispose();
+    this.pathSel.geometry = path ? ribbonGeometry([path], PATH_TOP + 0.04, (p) => p.width + 0.6).geometry : new THREE.BufferGeometry();
+    this.pathLabel.obj.visible = !!path;
+    if (path) {
+      this.pathLabel.div.textContent = path.name;
+      this.pathLabel.obj.position.copy(v3(this.park.pathPoint(path, 0.5), 0.6));
+    }
   }
 
   syncLawn(lawn) {
@@ -629,11 +763,18 @@ export class ParkView {
     const surfaces = [
       ...[...this.benchViews.values()].flatMap((v) => [v.pad, ...v.group.children]),
       ...[...this.lawnViews.values()].map((v) => v.mesh),
-      ...[...this.pathViews.values()].map((v) => v.mesh),
+      this.pathMesh,
     ];
     const hit = this.raycaster.intersectObjects(surfaces, false)[0];
+    if (hit?.object === this.pathMesh) return { type: 'path', id: this.park.paths[this.pathFaceOwner[hit.faceIndex]].id };
     if (hit) return { type: hit.object.userData.kind, id: hit.object.userData.id };
     return null;
+  }
+
+  // Model point the camera is looking at.
+  focusPoint() {
+    const t = this.controls.target;
+    return { x: t.x, y: -t.z };
   }
 
   // ---- loop ------------------------------------------------------------
@@ -686,6 +827,11 @@ export class ParkView {
       if (lv.mowLine.visible) lv.mowLine.material.opacity = 0.55 + 0.45 * Math.sin(t * 4);
     }
     this.controls.update();
+    const target = this.controls.target;
+    this.sun.position.set(target.x - 80, 180, target.z + 100);
+    this.sun.target.position.copy(target);
+    const far = this.camera.position.distanceTo(target);
+    this.container.classList.toggle('zoomed-out', far > 1200);
     this.renderer.render(this.scene, this.camera);
     this.labelRenderer.render(this.scene, this.camera);
   }

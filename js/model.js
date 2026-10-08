@@ -2,7 +2,7 @@
 // relationships, the rules that constrain them and the actions that change
 // them. Users are people or dogs. This module has no rendering code.
 
-import * as G from './geometry.js?v=2';
+import * as G from './geometry.js?v=3';
 
 export const ACTIVITIES = ['walking', 'standing', 'sitting', 'playing'];
 export const GRASS_MIN = 2;
@@ -30,21 +30,40 @@ function mulberry32(seed) {
 
 const pt = (x, y) => ({ x, y });
 
-// A path is described by its centerline and width; the boundary is the
-// rectangle the centerline sweeps out.
-function makePath(id, name, a, b, width) {
-  const len = Math.hypot(b.x - a.x, b.y - a.y);
-  const u = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
-  const n = { x: -u.y, y: u.x };
-  const hw = width / 2;
-  const boundary = G.toCCW([
-    pt(a.x - n.x * hw, a.y - n.y * hw),
-    pt(b.x - n.x * hw, b.y - n.y * hw),
-    pt(b.x + n.x * hw, b.y + n.y * hw),
-    pt(a.x + n.x * hw, a.y + n.y * hw),
-  ]);
+const PATH_KIND_NAMES = {
+  footway: 'Footpath', path: 'Trail', steps: 'Steps', bridleway: 'Bridle path', cycleway: 'Bike path',
+  track: 'Track', service: 'Service road', unclassified: 'Park road', pedestrian: 'Walk',
+};
+
+const BORDER_TOLERANCE = 6; // ft between a path's edge and a lawn it borders
+
+// Starting grass height (″), status and daily growth for the real lawns.
+const LAWN_START = {
+  'great-lawn': [7, 'open', 0.8],
+  'sheep-meadow': [17, 'open', 1.1],
+  'east-meadow': [10, 'open', 0.9],
+  'north-meadow': [12, 'open', 1.0],
+  'cedar-hill': [13, 'closed', 1.4],
+  'pilgrim-hill': [6, 'open', 1.2],
+  'great-hill': [15.5, 'open', 0.7],
+  'east-green': [9, 'open', 1.3],
+  'frisbee-hill': [11, 'open', 1.0],
+  'dene-slope': [8, 'open', 1.1],
+  'childrens-glade': [5, 'open', 0.9],
+};
+
+// A path is a stretch of real footway between two junctions, described by its
+// centerline polyline and width. `from` and `to` name the map nodes at its
+// ends; paths that share a node meet there.
+function makePath(f) {
+  const points = f.points;
+  const cum = G.polylineLengths(points);
+  const bb = G.bbox(points);
+  const hw = f.width / 2;
   return {
-    kind: 'path', id, name, width, a, b, len, u, n, boundary,
+    kind: 'path', id: f.id, name: f.name || PATH_KIND_NAMES[f.kind] || 'Path', osmKind: f.kind,
+    width: f.width, points, cum, len: cum[cum.length - 1], from: f.from, to: f.to,
+    box: { minX: bb.minX - hw, minY: bb.minY - hw, maxX: bb.maxX + hw, maxY: bb.maxY + hw },
     bordersLawns: [], connectsTo: [], benches: [], junctions: [], range: [0, 1],
   };
 }
@@ -53,35 +72,42 @@ function makeLawn(id, name, boundary, grassHeight, status, growth) {
   const poly = G.toCCW(boundary);
   const area = G.polygonArea(poly);
   return {
-    kind: 'lawn', id, name, boundary: poly, area,
+    kind: 'lawn', id, name, boundary: poly, area, box: G.bbox(poly),
     capacity: Math.floor(area / SQFT_PER_USER),
     grassHeight, status, growth, borderedBy: [],
   };
 }
 
 // A bench stands just off one side of a path (side +1 or -1 along the path's
-// normal), parallel to it and facing it.
+// normal at s), parallel to it and facing it.
 function makeBench(id, name, path, s, side) {
   const length = 5;
   const depth = 1.6;
+  const f = G.pointOnPolyline(path.points, path.cum, path.len * s);
+  const { u, n } = f;
   const off = side * (path.width / 2 + 0.35 + depth / 2);
-  const along = path.len * s;
-  const center = pt(path.a.x + path.u.x * along + path.n.x * off, path.a.y + path.u.y * along + path.n.y * off);
+  const center = pt(f.point.x + n.x * off, f.point.y + n.y * off);
   const corner = (k, m) => pt(
-    center.x + path.u.x * (length / 2) * k + path.n.x * (depth / 2) * m,
-    center.y + path.u.y * (length / 2) * k + path.n.y * (depth / 2) * m,
+    center.x + u.x * (length / 2) * k + n.x * (depth / 2) * m,
+    center.y + u.y * (length / 2) * k + n.y * (depth / 2) * m,
   );
+  const boundary = G.toCCW([corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)]);
   return {
     kind: 'bench', id, name, pathId: path.id, s, side, center, length, depth,
-    u: path.u, facing: pt(-side * path.n.x, -side * path.n.y),
-    boundary: G.toCCW([corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)]),
+    u, facing: pt(-side * n.x, -side * n.y), boundary, box: G.bbox(boundary),
     seats: BENCH_SEATS,
-    seatPoints: [-1.6, 0, 1.6].map((k) => pt(center.x + path.u.x * k, center.y + path.u.y * k)),
+    seatPoints: [-1.6, 0, 1.6].map((k) => pt(center.x + u.x * k, center.y + u.y * k)),
   };
 }
 
 export class Park {
-  constructor(seed = 7) {
+  // `map` is the parsed Central Park extract from map.js.
+  constructor(map, seed = 7) {
+    this.map = map;
+    this.paths = map.paths.map(makePath);
+    this.pathById = new Map(this.paths.map((p) => [p.id, p]));
+    this.pathIndex = new G.GridIndex(150);
+    for (const p of this.paths) this.pathIndex.insert(p, p.box);
     this.reset(seed);
   }
 
@@ -93,59 +119,95 @@ export class Park {
     this.users = [];
     this.log = [];
 
-    // Park footprint: 80 ft x 50 ft, ringed by a 4 ft loop of paths with a
-    // 4 ft path crossing through the middle.
-    this.paths = [
-      makePath('north', 'North Walk', pt(-40, 23), pt(40, 23), 4),
-      makePath('south', 'South Walk', pt(-40, -23), pt(40, -23), 4),
-      makePath('west', 'West Walk', pt(-38, -21), pt(-38, 21), 4),
-      makePath('east', 'East Walk', pt(38, -21), pt(38, 21), 4),
-      makePath('middle', 'Center Walk', pt(0, -21), pt(0, 21), 4),
-    ];
-
-    this.lawns = [
-      makeLawn('A', 'Great Lawn',
-        [pt(-36, -21), pt(-2, -21), pt(-2, 21), pt(-28, 21), pt(-36, 13)], 7, 'open', 0.8),
-      makeLawn('B', 'East Meadow',
-        [pt(2, -3), pt(36, -3), pt(36, 21), pt(2, 21)], 17, 'open', 1.1),
-      makeLawn('C', 'Rose Corner',
-        [pt(2, -21), pt(15, -21), pt(15, -15), pt(10, -11), pt(2, -11)], 13, 'closed', 1.4),
-    ];
-
-    const p = (id) => this.path(id);
-    this.benches = [
-      makeBench('b1', 'North Bench 1', p('north'), 0.30, 1),
-      makeBench('b2', 'North Bench 2', p('north'), 0.72, 1),
-      makeBench('b3', 'South Bench', p('south'), 0.35, -1),
-      makeBench('b4', 'Center Bench', p('middle'), 0.333, -1),
-      makeBench('b5', 'Pond Bench', p('east'), 0.31, 1),
-    ];
-
+    this.lawns = this.map.lawns.map((l) => {
+      const [h, status, growth] = LAWN_START[l.id] || [8, 'open', 1];
+      return makeLawn(l.id, l.name, l.points, h, status, growth);
+    });
     this.computeRelationships();
+    // The visitors start at the south end of the Great Lawn, by Turtle Pond.
+    const great = this.lawn('great-lawn');
+    const south = great.boundary.reduce((m, p) => (p.y < m.y ? p : m));
+    this.focus = pt(south.x, south.y + 40);
+    this.benches = this.placeBenches();
+    for (const p of this.paths) p.benches = this.benches.filter((b) => b.pathId === p.id).map((b) => b.id);
+    this.staticChecks = this.checkLayout();
 
-    // Example population: 6 people walking, 3 sitting on lawns, 1 standing,
-    // 1 resting on a bench, plus two dogs.
-    const walkers = [
-      ['north', 0.30, 1], ['south', 0.62, -1], ['west', 0.45, 1],
-      ['east', 0.55, -1], ['middle', 0.25, 1], ['middle', 0.78, -1],
-    ];
-    const people = walkers.map(([pathId, t, dir]) => this.spawnWalker(pathId, t, dir));
-    const sitterA = this.spawnOnLawn('A', 'sitting', pt(-21, 6));
-    this.spawnOnLawn('A', 'sitting', pt(-14, -9));
-    this.spawnOnLawn('B', 'sitting', pt(21, 11));
-    this.spawnOnLawn('B', 'standing', pt(12, 4));
-    this.seatOnBench(this.newPerson('sitting', pt(0, 0), { type: 'bench', id: 'b1' }), this.bench('b1'));
+    const nearby = this.pathsNear(this.focus, 200)
+      .filter(({ path }) => path.width <= 12 && path.len > 12)
+      .slice(0, 6);
+    const people = nearby.map(({ path, c }, i) =>
+      this.spawnWalker(path.id, Math.max(0.15, Math.min(0.85, c.d / path.len)), i % 2 ? -1 : 1));
+    const f = this.focus;
+    const sitterA = this.spawnOnLawn('great-lawn', 'sitting', pt(f.x - 12, f.y + 18));
+    this.spawnOnLawn('great-lawn', 'sitting', pt(f.x + 14, f.y + 30));
+    this.spawnOnLawn('great-lawn', 'sitting', pt(f.x + 30, f.y + 12));
+    this.spawnOnLawn('great-lawn', 'standing', pt(f.x + 4, f.y + 8));
+    const bench = this.benches
+      .slice()
+      .sort((a, b) => Math.hypot(a.center.x - f.x, a.center.y - f.y) - Math.hypot(b.center.x - f.x, b.center.y - f.y))[0];
+    this.seatOnBench(this.newPerson('sitting', pt(0, 0), { type: 'bench', id: bench.id }), bench);
 
     this.attachDog(people[2]);
     const luna = this.attachDog(sitterA);
     this.unleash(luna, true);
 
-    this.note('Park opened with 11 visitors and 2 dogs.');
+    this.note('Central Park opened with 11 visitors and 2 dogs at the Great Lawn.');
+  }
+
+  // A few benches along the paths that border each lawn, on the side away
+  // from the lawn, wherever they clear every lawn, path and other bench.
+  placeBenches() {
+    const benches = [];
+    // One by the starting spot, so the first visitors have somewhere to sit.
+    for (const { path } of this.pathsNear(this.focus, 150)) {
+      if (path.width > 12 || path.osmKind === 'steps' || path.len < 16) continue;
+      for (const side of [1, -1]) {
+        const bench = makeBench('b1', 'Turtle Pond Bench', path, 0.5, side);
+        if (!benches.length && this.benchClear(bench, benches)) benches.push(bench);
+      }
+      if (benches.length) break;
+    }
+    for (const lawn of this.lawns) {
+      const want = lawn.area > 150000 ? 3 : 1;
+      const center = G.centroid(lawn.boundary);
+      const candidates = lawn.borderedBy.map((id) => this.path(id))
+        .filter((p) => p.width <= 12 && p.osmKind !== 'steps' && p.len >= 16)
+        .sort((a, b) => b.len - a.len);
+      let placed = 0;
+      for (const path of candidates) {
+        if (placed >= want) break;
+        // Middle of the path's longest straight stretch.
+        let seg = 1;
+        for (let i = 1; i < path.points.length; i++) {
+          if (path.cum[i] - path.cum[i - 1] > path.cum[seg] - path.cum[seg - 1]) seg = i;
+        }
+        if (path.cum[seg] - path.cum[seg - 1] < 8) continue;
+        const s = (path.cum[seg - 1] + path.cum[seg]) / 2 / path.len;
+        const f = G.pointOnPolyline(path.points, path.cum, s * path.len);
+        const toLawn = (center.x - f.point.x) * f.n.x + (center.y - f.point.y) * f.n.y;
+        const side = toLawn > 0 ? -1 : 1;
+        const id = `b${benches.length + 1}`;
+        const bench = makeBench(id, `${lawn.name} Bench${want > 1 ? ` ${placed + 1}` : ''}`, path, s, side);
+        if (this.benchClear(bench, benches)) {
+          benches.push(bench);
+          placed++;
+        }
+      }
+    }
+    return benches;
+  }
+
+  benchClear(bench, others) {
+    if (others.some((o) => Math.hypot(o.center.x - bench.center.x, o.center.y - bench.center.y) < 8)) return false;
+    if (this.lawns.some((l) => G.bboxOverlap(l.box, bench.box) && G.polygonsOverlap(l.boundary, bench.boundary))) return false;
+    if (this.map.water.some((w) => bench.boundary.some((c) => G.pointInPolygon(c, w.points)))) return false;
+    return this.pathIndex.inBox(bench.box).every((p) =>
+      G.polylineToPolygonDistance(p.points, bench.boundary, p.cum) >= p.width / 2 - 0.01);
   }
 
   // ---- lookups ---------------------------------------------------------
 
-  path(id) { return this.paths.find((p) => p.id === id); }
+  path(id) { return this.pathById.get(id); }
   lawn(id) { return this.lawns.find((l) => l.id === id); }
   bench(id) { return this.benches.find((b) => b.id === id); }
   user(id) { return this.users.find((u) => u.id === id); }
@@ -171,53 +233,87 @@ export class Park {
 
   computeRelationships() {
     for (const lawn of this.lawns) {
-      lawn.borderedBy = this.paths
-        .filter((p) => G.sharedBoundaryLength(lawn.boundary, p.boundary) > 0.01)
+      lawn.borderedBy = this.pathIndex.inBox({
+        minX: lawn.box.minX - 30, minY: lawn.box.minY - 30, maxX: lawn.box.maxX + 30, maxY: lawn.box.maxY + 30,
+      })
+        .filter((p) => G.polylineToPolygonDistance(p.points, lawn.boundary, p.cum) <= p.width / 2 + BORDER_TOLERANCE)
         .map((p) => p.id);
     }
+    const byLawn = new Map();
+    for (const l of this.lawns) for (const id of l.borderedBy) byLawn.set(id, [...(byLawn.get(id) || []), l.id]);
+
+    // Paths meet where they share an end node. Walkers turn there.
+    const ends = new Map();
     for (const p of this.paths) {
-      p.bordersLawns = this.lawns.filter((l) => l.borderedBy.includes(p.id)).map((l) => l.id);
-      p.connectsTo = this.paths
-        .filter((q) => q !== p && G.sharedBoundaryLength(p.boundary, q.boundary) > 0.01)
-        .map((q) => q.id);
-      p.benches = this.benches.filter((b) => b.pathId === p.id).map((b) => b.id);
-      p.junctions = [];
+      for (const [node, s] of [[p.from, 0], [p.to, 1]]) {
+        if (!ends.has(node)) ends.set(node, []);
+        ends.get(node).push({ path: p, s });
+      }
     }
-    // Junctions are where walkers can step from one path's centerline onto
-    // another's.
     for (const p of this.paths) {
-      for (const qid of p.connectsTo) {
-        const q = this.path(qid);
-        const c = G.closestBetweenSegments(p.a, p.b, q.a, q.b);
-        p.junctions.push({ s: c.s, other: q.id, otherS: c.t });
+      p.bordersLawns = byLawn.get(p.id) || [];
+      p.junctions = [];
+      for (const [node, s] of [[p.from, 0], [p.to, 1]]) {
+        for (const e of ends.get(node)) {
+          if (e.path !== p) p.junctions.push({ s, other: e.path.id, otherS: e.s });
+        }
       }
       p.junctions.sort((x, y) => x.s - y.s);
-      // Walkers turn around (or turn off) at the junction nearest each end
-      // rather than walking into the corner square owned by the other path.
-      const nearEnd = p.width / p.len;
-      const margin = 0.5 / p.len;
-      const startJ = p.junctions.filter((j) => j.s <= nearEnd);
-      const endJ = p.junctions.filter((j) => j.s >= 1 - nearEnd);
-      p.range = [
-        startJ.length ? Math.min(...startJ.map((j) => j.s)) : margin,
-        endJ.length ? Math.max(...endJ.map((j) => j.s)) : 1 - margin,
-      ];
+      p.connectsTo = [...new Set(p.junctions.map((j) => j.other))];
+      p.range = [0, 1];
     }
+  }
+
+  // Static layout rules: they depend only on the map, so they're checked once.
+  checkLayout() {
+    const overlaps = [];
+    for (let i = 0; i < this.lawns.length; i++) {
+      const a = this.lawns[i];
+      for (const b of this.lawns.slice(i + 1)) {
+        if (G.bboxOverlap(a.box, b.box) && G.polygonsOverlap(a.boundary, b.boundary)) overlaps.push(`${a.name} overlaps ${b.name}`);
+      }
+      for (const p of this.pathIndex.inBox(a.box)) {
+        if (G.polylineEntersPolygon(p.points, a.boundary)) overlaps.push(`${p.name} cuts across ${a.name}`);
+      }
+    }
+    for (const b of this.benches) {
+      if (!this.benchClear(b, this.benches.filter((o) => o !== b))) overlaps.push(`${b.name} overlaps its surroundings`);
+    }
+    const unbordered = [
+      ...this.lawns.filter((l) => l.borderedBy.length === 0).map((l) => `${l.name} borders no path`),
+      ...this.benches.filter((b) => {
+        const p = this.path(b.pathId);
+        return G.polylineToPolygonDistance(p.points, b.boundary, p.cum) > p.width / 2 + 0.5;
+      }).map((b) => `${b.name} is away from any path`),
+    ];
+    const narrow = this.paths.filter((p) => p.width < MIN_PATH_WIDTH).map((p) => `${p.name} is ${p.width} ft wide`);
+    return { overlaps, unbordered, narrow };
   }
 
   // ---- positions -------------------------------------------------------
 
   pathPoint(path, t, lane = 0) {
-    return pt(
-      path.a.x + path.u.x * path.len * t + path.n.x * lane,
-      path.a.y + path.u.y * path.len * t + path.n.y * lane,
-    );
+    const f = G.pointOnPolyline(path.points, path.cum, path.len * t);
+    return pt(f.point.x + f.n.x * lane, f.point.y + f.n.y * lane);
+  }
+
+  // Paths whose centerline passes within r ft of p, nearest first.
+  pathsNear(p, r) {
+    return this.pathIndex.near(p, r)
+      .map((path) => ({ path, c: G.closestOnPolyline(p, path.points, path.cum) }))
+      .filter((x) => x.c.dist <= r)
+      .sort((a, b) => a.c.dist - b.c.dist);
   }
 
   // Which lawn, path or bench contains p (boundaries count as inside).
   locate(p) {
-    for (const l of this.lawns) if (G.containsPoint(l.boundary, p)) return { type: 'lawn', id: l.id };
-    for (const q of this.paths) if (G.containsPoint(q.boundary, p)) return { type: 'path', id: q.id };
+    for (const l of this.lawns) {
+      if (G.bboxOverlap(l.box, { minX: p.x, maxX: p.x, minY: p.y, maxY: p.y }, 0.01) && G.containsPoint(l.boundary, p)) {
+        return { type: 'lawn', id: l.id };
+      }
+    }
+    const onPath = this.pathsNear(p, 20).find((x) => x.c.dist <= x.path.width / 2 + 0.05);
+    if (onPath) return { type: 'path', id: onPath.path.id };
     for (const b of this.benches) if (G.containsPoint(b.boundary, p)) return { type: 'bench', id: b.id };
     return null;
   }
@@ -314,7 +410,7 @@ export class Park {
       // Owner on a bench: the dog sits on the path at their feet.
       const bench = this.bench(owner.locationId);
       const path = this.path(bench.pathId);
-      const along = (owner.position.x - path.a.x) * path.u.x + (owner.position.y - path.a.y) * path.u.y;
+      const along = G.closestOnPolyline(owner.position, path.points, path.cum).d;
       dog.walk = null;
       dog.position = this.pathPoint(path, along / path.len, bench.side * (path.width / 2 - 0.7));
       dog.activity = 'sitting';
@@ -330,11 +426,9 @@ export class Park {
 
   // Puts a person on the path nearest their position, walking.
   moveToNearestPath(user) {
-    let best = null;
-    for (const path of this.paths) {
-      const c = G.closestOnSegment(user.position, path.a, path.b);
-      if (!best || c.dist < best.dist) best = { path, t: c.t, dist: c.dist };
-    }
+    let near = [];
+    for (let r = 40; !near.length && r < 5000; r *= 2) near = this.pathsNear(user.position, r);
+    const best = { path: near[0].path, t: near[0].c.d / near[0].path.len };
     const { path } = best;
     const [lo, hi] = path.range;
     const t = Math.max(lo, Math.min(hi, best.t));
@@ -396,8 +490,11 @@ export class Park {
 
   // ---- actions -----------------------------------------------------------
 
-  addUser() {
-    const path = this.paths[Math.floor(this.rng() * this.paths.length)];
+  // A new visitor arrives on a path near `near` (where the camera is looking).
+  addUser(near = this.focus) {
+    const options = this.pathsNear(near, 120).map((x) => x.path).filter((p) => p.len > 4);
+    const pool = options.length ? options : this.paths;
+    const path = pool[Math.floor(this.rng() * pool.length)];
     const [lo, hi] = path.range;
     const user = this.spawnWalker(path.id, lo + (hi - lo) * this.rng(), this.rng() < 0.5 ? 1 : -1);
     this.note(`${user.name} arrived on ${path.name}, walking.`);
@@ -406,14 +503,14 @@ export class Park {
 
   // Gives the selected person a dog on a leash, or brings a new visitor with
   // a dog when no person is selected.
-  addDog(ownerId) {
+  addDog(ownerId, near) {
     let owner = ownerId ? this.user(ownerId) : null;
     if (owner && owner.type !== 'person') owner = this.owner(owner);
     if (owner?.locationType === 'lawn') {
       const check = this.canEnterLawn(this.lawn(owner.locationId));
       if (!check.ok) return this.refuse(`No room for a dog: ${check.reason}.`);
     }
-    if (!owner) owner = this.addUser().user;
+    if (!owner) owner = this.addUser(near).user;
     const dog = this.attachDog(owner);
     this.note(`${owner.name} brought ${dog.name} the dog, on a leash.`);
     return { ok: true, user: dog };
@@ -526,7 +623,10 @@ export class Park {
     if (dog.leashed) return this.refuse(`${dog.name} needs to be off the leash to play fetch.`);
     const owner = this.owner(dog);
     const lawn = this.lawn(dog.locationId);
-    const ball = G.randomPointInPolygon(lawn.boundary, LAWN_MARGIN, this.rng);
+    const ang = this.rng() * Math.PI * 2;
+    const reach = 15 + this.rng() * 20;
+    const ball = G.pushInside(pt(owner.position.x + Math.cos(ang) * reach, owner.position.y + Math.sin(ang) * reach),
+      lawn.boundary, LAWN_MARGIN);
     const start = { ...dog.position };
     dog.position = this.findLawnSpot(lawn, pt(owner.position.x + 1.5, owner.position.y + 1), DOG_SPACING, dog);
     dog.activity = 'playing';
@@ -611,12 +711,24 @@ export class Park {
     return trails;
   }
 
+  // Waypoints for an animation through `stops`, following each path's bends.
   trailPoints(stops, lane) {
-    return stops.map((s) => {
+    const pts = [];
+    stops.forEach((s, i) => {
       const path = this.path(s.pathId);
       const max = path.width * 0.42;
-      return this.pathPoint(path, s.t, Math.max(-max, Math.min(max, lane)));
+      const l = Math.max(-max, Math.min(max, lane));
+      const prev = stops[i - 1];
+      if (prev && prev.pathId === s.pathId) {
+        const d0 = prev.t * path.len;
+        const d1 = s.t * path.len;
+        const inner = path.cum.filter((c) => c > Math.min(d0, d1) + 1e-6 && c < Math.max(d0, d1) - 1e-6);
+        if (d1 < d0) inner.reverse();
+        for (const c of inner) pts.push(this.pathPoint(path, c / path.len, l));
+      }
+      pts.push(this.pathPoint(path, s.t, l));
     });
+    return pts;
   }
 
   // Walks a person `distance` ft along the path network. Returns the stops
@@ -624,7 +736,7 @@ export class Park {
   walk(user, distance) {
     const stops = [{ pathId: user.walk.pathId, t: user.walk.t }];
     let remaining = distance;
-    for (let guard = 0; remaining > 1e-6 && guard < 24; guard++) {
+    for (let guard = 0; remaining > 1e-6 && guard < 200; guard++) {
       const w = user.walk;
       const path = this.path(w.pathId);
       const [lo, hi] = path.range;
@@ -729,27 +841,9 @@ export class Park {
       .filter((u) => u.activity === 'playing' && (u.type !== 'dog' || u.leashed))
       .map((u) => `${u.name} is playing on the leash`));
 
-    const shapes = [...this.lawns, ...this.paths, ...this.benches];
-    const overlaps = [];
-    for (let i = 0; i < shapes.length; i++) {
-      for (let j = i + 1; j < shapes.length; j++) {
-        if (G.polygonsOverlap(shapes[i].boundary, shapes[j].boundary)) {
-          overlaps.push(`${shapes[i].name} overlaps ${shapes[j].name}`);
-        }
-      }
-    }
-    add('Lawn, path and bench boundaries do not overlap', overlaps);
-
-    add('Every lawn and bench borders a path', [
-      ...this.lawns.filter((l) => l.borderedBy.length === 0).map((l) => `${l.name} borders no path`),
-      ...this.benches.filter((b) => !this.paths.some((p) =>
-        Math.min(...b.boundary.map((c) => G.distanceToPolygon(c, p.boundary))) <= 0.5))
-        .map((b) => `${b.name} is away from any path`),
-    ]);
-
-    add(`Path width ≥ ${MIN_PATH_WIDTH} ft`, this.paths
-      .filter((p) => p.width < MIN_PATH_WIDTH)
-      .map((p) => `${p.name} is ${p.width} ft wide`));
+    add('Lawns, paths and benches do not overlap', this.staticChecks.overlaps);
+    add('Every lawn and bench borders a path', this.staticChecks.unbordered);
+    add(`Path width ≥ ${MIN_PATH_WIDTH} ft`, this.staticChecks.narrow);
 
     add(`Grass height between ${GRASS_MIN}″ and ${GRASS_MAX}″`, this.lawns
       .filter((l) => l.grassHeight < GRASS_MIN || l.grassHeight > GRASS_MAX)

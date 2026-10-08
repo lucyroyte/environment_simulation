@@ -208,3 +208,106 @@ export function randomPointInPolygon(poly, margin, rng = Math.random) {
 export function distanceToPolygon(p, poly) {
   return pointInPolygon(p, poly) ? 0 : nearestOnBoundary(p, poly).dist;
 }
+
+// ---- polylines ------------------------------------------------------------
+
+// Cumulative length at each vertex of an open polyline.
+export function polylineLengths(points) {
+  const cum = [0];
+  for (let i = 1; i < points.length; i++) {
+    cum.push(cum[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y));
+  }
+  return cum;
+}
+
+// Point `d` ft along a polyline, with the unit direction u and left normal n
+// of the segment it falls on.
+export function pointOnPolyline(points, cum, d) {
+  const total = cum[cum.length - 1];
+  d = Math.max(0, Math.min(total, d));
+  let i = 1;
+  while (i < points.length - 1 && cum[i] < d) i++;
+  const a = points[i - 1], b = points[i];
+  const len = cum[i] - cum[i - 1];
+  const k = len > 0 ? (d - cum[i - 1]) / len : 0;
+  const u = len > 0 ? { x: (b.x - a.x) / len, y: (b.y - a.y) / len } : { x: 1, y: 0 };
+  return { point: { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k }, u, n: { x: -u.y, y: u.x }, seg: i - 1 };
+}
+
+// Closest point on a polyline to p; d is the distance along the polyline.
+export function closestOnPolyline(p, points, cum) {
+  let best = null;
+  for (let i = 1; i < points.length; i++) {
+    const c = closestOnSegment(p, points[i - 1], points[i]);
+    if (!best || c.dist < best.dist) {
+      best = { point: c.point, dist: c.dist, d: cum[i - 1] + c.t * (cum[i] - cum[i - 1]) };
+    }
+  }
+  return best;
+}
+
+// Whether a polyline's centerline enters a polygon's interior.
+export function polylineEntersPolygon(points, poly, margin = 1e-3) {
+  for (let i = 1; i < points.length; i++) {
+    for (let j = 0; j < poly.length; j++) {
+      if (segmentsCross(points[i - 1], points[i], poly[j], poly[(j + 1) % poly.length])) return true;
+    }
+  }
+  return points.some((p) => strictlyInside(p, poly, margin));
+}
+
+// Smallest distance between a polyline and a polygon (0 when they touch).
+export function polylineToPolygonDistance(points, poly, cum = polylineLengths(points)) {
+  let best = Infinity;
+  for (const p of points) best = Math.min(best, distanceToPolygon(p, poly));
+  for (const q of poly) best = Math.min(best, closestOnPolyline(q, points, cum).dist);
+  return best;
+}
+
+export function bboxOverlap(a, b, pad = 0) {
+  return a.minX - pad <= b.maxX && b.minX - pad <= a.maxX && a.minY - pad <= b.maxY && b.minY - pad <= a.maxY;
+}
+
+// Uniform grid of items by bounding box, for "what is near this point".
+export class GridIndex {
+  constructor(cell = 120) {
+    this.cell = cell;
+    this.cells = new Map();
+  }
+
+  key(i, j) { return i * 100003 + j; }
+
+  insert(item, box) {
+    const c = this.cell;
+    for (let i = Math.floor(box.minX / c); i <= Math.floor(box.maxX / c); i++) {
+      for (let j = Math.floor(box.minY / c); j <= Math.floor(box.maxY / c); j++) {
+        const k = this.key(i, j);
+        if (!this.cells.has(k)) this.cells.set(k, []);
+        this.cells.get(k).push(item);
+      }
+    }
+  }
+
+  // Items whose boxes come within r of p (a superset; callers measure exactly).
+  near(p, r) {
+    const c = this.cell;
+    const out = new Set();
+    for (let i = Math.floor((p.x - r) / c); i <= Math.floor((p.x + r) / c); i++) {
+      for (let j = Math.floor((p.y - r) / c); j <= Math.floor((p.y + r) / c); j++) {
+        for (const item of this.cells.get(this.key(i, j)) || []) out.add(item);
+      }
+    }
+    return [...out];
+  }
+
+  inBox(box) {
+    const out = new Set();
+    const c = this.cell;
+    for (let i = Math.floor(box.minX / c); i <= Math.floor(box.maxX / c); i++) {
+      for (let j = Math.floor(box.minY / c); j <= Math.floor(box.maxY / c); j++) {
+        for (const item of this.cells.get(this.key(i, j)) || []) out.add(item);
+      }
+    }
+    return [...out];
+  }
+}
